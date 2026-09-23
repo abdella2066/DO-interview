@@ -17,7 +17,7 @@ logs: ## Follow API container logs
 	docker compose logs -f api
 
 run: ## Run the API on the host with auto-reload (needs `make up` for Postgres/Valkey)
-	$(PY) -m uvicorn app.main:app --reload --port 8000
+	$(PY) -m uvicorn app.main:create_app --factory --reload --port 8000
 
 test: ## Run the test suite with coverage (needs `make up` for Postgres/Valkey)
 	$(PY) -m pytest --cov=app --cov-report=term-missing

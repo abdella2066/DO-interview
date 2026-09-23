@@ -16,12 +16,14 @@ async def liveness() -> dict[str, str]:
 
 @router.get("/readyz", summary="Readiness probe")
 async def readiness(request: Request) -> JSONResponse:
-    """Ready for traffic only when the database answers."""
+    """Ready for traffic only when the database answers. A cache outage only degrades."""
     database_ok = await check_database(request.app.state.engine)
+    cache_ok = await request.app.state.cache.ping()
     return JSONResponse(
         status_code=200 if database_ok else 503,
         content={
             "status": "ok" if database_ok else "unavailable",
             "database": "ok" if database_ok else "unavailable",
+            "cache": "ok" if cache_ok else "degraded",
         },
     )

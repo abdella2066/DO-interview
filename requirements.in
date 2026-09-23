@@ -7,4 +7,3 @@ sqlalchemy[asyncio]>=2.0.30
 psycopg[binary]>=3.2
 alembic>=1.13
 redis>=5.0
-cachetools>=5.3

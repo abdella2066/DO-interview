@@ -27,6 +27,16 @@ services:
       timeout: 3s
       retries: 20
 
+  # One-shot job, like App Platform's PRE_DEPLOY job: the API starts only after it succeeds.
+  migrate:
+    build: .
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/featureflags
+    depends_on:
+      db:
+        condition: service_healthy
+
   api:
     build: .
     ports:
@@ -41,6 +51,8 @@ services:
         condition: service_healthy
       cache:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:

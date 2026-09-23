@@ -17,5 +17,6 @@ RUN useradd --create-home --uid 10001 appuser
 USER appuser
 
 EXPOSE 8080
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", \
-     "--proxy-headers", "--forwarded-allow-ips", "*"]
+# --factory: uvicorn calls create_app(). --no-access-log: app/middleware.py logs each request.
+CMD ["uvicorn", "app.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8080", \
+     "--proxy-headers", "--forwarded-allow-ips", "*", "--no-access-log"]
