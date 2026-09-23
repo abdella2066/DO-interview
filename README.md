@@ -10,15 +10,19 @@ Python 3.12, FastAPI, SQLAlchemy 2 (async) with psycopg 3, Alembic, PostgreSQL, 
 
 ## How evaluation works
 
-Every flag has a **global state** (`enabled`). It's set when the flag is created (the "default state", off unless you say otherwise) and changed with `PATCH`. Individual users can also have a **per-user override**.
+Every flag has a **global state** (`enabled`). It's set when the flag is created (the "default state", off unless you say otherwise) and changed with `PATCH`. An enabled flag can be limited to a **rollout percentage** of users (0-100, default 100). Individual users can also have a **per-user override**.
 
 Evaluating a flag for a user:
 
 1. Unknown flag: `404 FLAG_NOT_FOUND`.
 2. The user has an override: the override's value, with `reason: "USER_OVERRIDE"`.
-3. Otherwise: the flag's global state, with `reason: "GLOBAL"`.
+3. The flag is disabled globally: `false`, with `reason: "GLOBAL"`, whatever the rollout percentage.
+4. The rollout percentage is 100: `true`, with `reason: "GLOBAL"`.
+5. Otherwise: `true` only if the user's bucket is below the rollout percentage, with `reason: "ROLLOUT"`.
 
 Overrides are explicit exceptions, so they win in both directions: beta testers can see a flag that's off for everyone else, and a customer who opted out keeps it off while it's on for everyone. User IDs are opaque strings from your system and are case-sensitive.
+
+A user's bucket is a number from 0 to 99: the first 8 bytes of `sha256("{flag_key}:{user_id}")`, read as a big-endian integer, modulo 100. It's the same on every request, instance, and deploy, so a user doesn't flip between on and off. Raising the percentage only adds users (everyone who's in at 10% is still in at 50%), and lowering it only removes them. Because the flag key is part of the hash, each flag picks its own users: the 10% who get one flag aren't the same 10% who get the next.
 
 ## API
 
@@ -26,10 +30,10 @@ All `/api/v1` endpoints need an `X-API-Key` header. The health probes are public
 
 | Method | Path | What it does | Success |
 |---|---|---|---|
-| `POST` | `/api/v1/flags` | Create a flag | `201` + `Location` |
+| `POST` | `/api/v1/flags` | Create a flag, optionally with a rollout percentage | `201` + `Location` |
 | `GET` | `/api/v1/flags?limit=50&offset=0` | List flags, newest first | `200` |
 | `GET` | `/api/v1/flags/{key}` | Get one flag | `200` |
-| `PATCH` | `/api/v1/flags/{key}` | Update name or description, or enable/disable globally | `200` |
+| `PATCH` | `/api/v1/flags/{key}` | Update name, description, or rollout percentage, or enable/disable globally | `200` |
 | `DELETE` | `/api/v1/flags/{key}` | Delete a flag and its overrides | `204` |
 | `PUT` | `/api/v1/flags/{key}/overrides/{user_id}` | Enable/disable for one user | `201` created, `200` replaced |
 | `GET` | `/api/v1/flags/{key}/overrides` | List a flag's overrides | `200` |
@@ -64,8 +68,9 @@ Validation rules:
 - `name`: 1-100 characters after trimming whitespace. `description`: up to 500 characters, or `null`.
 - `user_id`: 1-128 characters from `A-Z a-z 0-9 . _ : @ + -`.
 - `enabled`: must be a real JSON boolean. `"true"`, `"yes"`, and `1` are rejected.
+- `rollout_percentage`: a JSON integer from 0 to 100, default 100. `"50"`, `50.5`, `50.0`, `true`, and `null` are rejected. The database enforces the same range with a `CHECK` constraint.
 - Unknown fields are rejected, so a typo like `"enable": true` fails loudly instead of silently doing nothing.
-- `PATCH` needs at least one field, and `name` and `enabled` can't be set to `null`.
+- `PATCH` needs at least one field, and `name`, `enabled`, and `rollout_percentage` can't be set to `null`.
 - `limit` is 1-100 and `offset` is 0 or more.
 
 ### Try it with curl
@@ -89,14 +94,19 @@ curl -si "$API/api/v1/flags/new-checkout/evaluate?user_id=someone-else" -H "X-AP
 # Every flag for one user in a single call
 curl -s $API/api/v1/users/beta-tester/flags -H "X-API-Key: $KEY"
 
-# Enable it globally
+# Enable it for 25% of users (reason ROLLOUT; each user's result stays the same)
 curl -s -X PATCH $API/api/v1/flags/new-checkout \
-  -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{"enabled": true}'
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" \
+  -d '{"enabled": true, "rollout_percentage": 25}'
+
+# Then for everyone
+curl -s -X PATCH $API/api/v1/flags/new-checkout \
+  -H "X-API-Key: $KEY" -H "Content-Type: application/json" -d '{"rollout_percentage": 100}'
 ```
 
 ## Caching
 
-- **What's cached:** one snapshot per flag (global state plus all of its overrides) under `ff:flag:{key}`, with a TTL of `CACHE_TTL_SECONDS` (60 by default). Evaluation is computed in-process from the snapshot, so one entry serves every user of that flag.
+- **What's cached:** one snapshot per flag (global state, rollout percentage, and all of its overrides) under `ff:flag:v2:{key}`, with a TTL of `CACHE_TTL_SECONDS` (60 by default). Evaluation is computed in-process from the snapshot, so one entry serves every user of that flag. `v2` is the snapshot format's version (see design decisions).
 - **Reads** are cache-aside: try the cache, otherwise load from Postgres and store the snapshot.
 - **Writes** commit to Postgres first and then delete the snapshot, so the next read rebuilds it from the source of truth.
 - **Backends:** Valkey or Redis when `CACHE_URL` is set, shared by every instance so one invalidation reaches all of them. Without it, an in-memory cache per process, which is only correct with a single instance.
@@ -136,10 +146,10 @@ make test                                         # in-memory cache variants onl
 TEST_CACHE_URL=redis://localhost:6379/1 make test  # also runs every API test against Valkey (CI does this)
 ```
 
-The suite has 152 tests:
+The suite has 202 tests:
 
-- **Unit:** evaluation precedence, snapshot serialization, in-memory cache TTL and eviction (with a fake clock), Redis fail-open (including a check that it fails fast), and config parsing.
-- **Integration:** FastAPI's `TestClient` against real Postgres, migrated with the real Alembic migrations and truncated before each test. Covers every endpoint and status code, the validation rules above, API key auth, the error envelope, request IDs, a database outage (503), cache hits and misses, and invalidation after every kind of write.
+- **Unit:** evaluation precedence, rollout bucketing (determinism, monotonicity, distribution, and independence across flags), snapshot serialization, in-memory cache TTL and eviction (with a fake clock), Redis fail-open (including a check that it fails fast), and config parsing.
+- **Integration:** FastAPI's `TestClient` against real Postgres, migrated with the real Alembic migrations and truncated before each test. Covers every endpoint and status code, the validation rules above, API key auth, the error envelope, request IDs, a database outage (503), cache hits and misses, and invalidation after every kind of write. A few tests check the rules the database enforces on its own: the rollout default and range.
 - Every API test runs twice: once with the in-memory cache and once with real Valkey.
 
 ## CI/CD and deployment
@@ -147,7 +157,7 @@ The suite has 152 tests:
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every pull request and every push to `main`:
 
 1. **lint:** `ruff check` and `ruff format --check`.
-2. **test:** Postgres and Valkey service containers, then `alembic upgrade head && alembic check` (fails if the models and migrations drift), then `pytest` with coverage.
+2. **test:** Postgres and Valkey service containers, then `alembic upgrade head && alembic check` (fails if the models and migrations drift; `migrations/env.py` enables Alembic's opt-in plugin so named `CHECK` constraints are compared too), then `pytest` with coverage.
 3. **docker:** builds the production image.
 4. **deploy** (pushes to `main` only, after the first three pass): `digitalocean/app_action` applies [`.do/app.yaml`](.do/app.yaml). App Platform builds the `Dockerfile`, runs the `migrate` job (`alembic upgrade head`) before the new version starts, then rolls it out behind the `/readyz` health check. The job waits and fails if the deployment fails.
 
@@ -160,6 +170,9 @@ Deploying somewhere new: fork, add the two secrets, change `repo_clone_url` in `
 ## Design decisions and trade-offs
 
 - **Overrides beat the global state.** It's the simplest rule to explain and matches how teams use per-user toggles (beta testers, opt-outs). The trade-off: disabling a flag globally doesn't switch off users with an explicit `true` override. A separate kill switch would handle emergencies (see next steps).
+- **Rollouts come after the global switch.** The order is override, then `enabled: false`, then the percentage, so turning a flag off still turns it off for everyone without an override, whatever the percentage. At 100% the reason stays `GLOBAL`, so flags that existed before rollouts behave exactly as they did.
+- **Hash-based buckets instead of stored assignments.** Hashing `flag_key:user_id` needs no storage, gives every instance the same answer, and can be computed from the cached snapshot. Reading 64 bits of the hash modulo 100 skews the buckets by about one part in 10^17, which is negligible. Changing the formula would reshuffle every live rollout, so a unit test pins one known bucket.
+- **Versioned cache keys.** The snapshot key includes a format version (`ff:flag:v2:{key}`), bumped whenever the snapshot's fields change. During a rolling deploy, old and new instances share Valkey. Old code can't parse a snapshot with a field it doesn't know (its evaluations of that flag would fail with a 500), and new code reading an old snapshot would treat every flag as a 100% rollout. With separate keys, each version reads only snapshots it wrote, and old entries expire after the TTL. The trade-off: during the deploy, a write handled by one version doesn't invalidate the other version's entry, so the other version can serve a stale snapshot for up to the TTL.
 - **Cache per flag, not per user.** One entry per flag keeps invalidation to a single `DEL` and serves every user, the same model client-side flag SDKs use. It gets expensive for flags with very large override lists. At that scale I'd move to segments or rules, or cache overrides per user.
 - **Invalidate after commit, with a TTL as the backstop.** Correct in the common case. A rare race and failed deletes during a cache outage are bounded by the TTL rather than eliminated.
 - **Fail-open cache.** Availability over latency: a Valkey outage makes requests slower, not failed.
@@ -171,7 +184,7 @@ Deploying somewhere new: fork, add the two secrets, change `repo_clone_url` in `
 ## Next steps
 
 - Kill switch that overrides everything, for incident response.
-- Percentage rollouts (deterministic hashing of `user_id`), segments, and targeting rules.
+- Segments and targeting rules.
 - Cache the all-flags-for-a-user endpoint (today it's one uncached SQL query), and paginate it for accounts with many flags.
 - Audit log of who changed what and when, plus environments (dev, staging, prod).
 - Per-client API keys with scopes, and rate limiting.
@@ -189,7 +202,7 @@ app/
   schemas.py       request/response models and validation rules
   errors.py        domain errors and the JSON error envelope
   repository.py    all SQL
-  evaluation.py    pure evaluation rules
+  evaluation.py    pure evaluation rules and rollout bucketing
   cache.py         cache interface, in-memory and Valkey/Redis backends
   service.py       business logic, cache-aside reads, invalidation
   dependencies.py  dependency injection and the API key check

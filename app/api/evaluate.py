@@ -18,7 +18,9 @@ router = APIRouter(tags=["evaluation"])
 @router.get(
     "/flags/{key}/evaluate",
     summary="Evaluate a flag for a user",
-    description="Precedence: the user's override if one exists, otherwise the global state. "
+    description="Precedence: the user's override if one exists; otherwise off if the flag is "
+    "disabled; otherwise on for everyone at a 100% rollout, or for the users inside a smaller "
+    "rollout percentage (reason ROLLOUT). "
     "The X-Cache response header is HIT when the flag was served from the cache.",
 )
 async def evaluate_flag(

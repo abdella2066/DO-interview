@@ -29,7 +29,13 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     engine = create_engine(database_url())
     with engine.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            # Autogenerate and `alembic check` only compare CHECK constraints (by name) with this
+            # opt-in plugin listed.
+            autogenerate_plugins=["alembic.autogenerate.*", "alembic.ext.checkconstraint_byname"],
+        )
         with context.begin_transaction():
             context.run_migrations()
     engine.dispose()

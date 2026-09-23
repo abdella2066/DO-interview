@@ -1,6 +1,9 @@
 import pytest
 
+from app.evaluation import rollout_bucket
+
 FLAG = "/api/v1/flags/new-checkout"
+USERS = [f"user-{i}" for i in range(10)]
 
 
 def evaluate(client, user_id):
@@ -42,6 +45,18 @@ def test_override_disables_an_enabled_flag_for_one_user(client, make_flag):
     assert evaluate(client, "someone-else").json()["enabled"] is True
 
 
+def test_partial_rollout_is_evaluated_per_user(client, make_flag):
+    make_flag("new-checkout", enabled=True, rollout_percentage=50)
+
+    results = {user: evaluate(client, user).json() for user in USERS}
+
+    assert {body["reason"] for body in results.values()} == {"ROLLOUT"}
+    assert {user: body["enabled"] for user, body in results.items()} == {
+        user: rollout_bucket("new-checkout", user) < 50 for user in USERS
+    }
+    assert {body["enabled"] for body in results.values()} == {True, False}
+
+
 def test_unknown_flag_returns_404(client):
     response = client.get("/api/v1/flags/missing/evaluate", params={"user_id": "user-1"})
 
@@ -79,6 +94,18 @@ def test_global_toggle_invalidates_the_cache(client, make_flag):
 
     assert response.headers["x-cache"] == "MISS"
     assert response.json()["enabled"] is True
+
+
+def test_rollout_change_invalidates_the_cache(client, make_flag):
+    make_flag("new-checkout", enabled=True)
+    evaluate(client, "user-1")
+    assert evaluate(client, "user-1").headers["x-cache"] == "HIT"
+
+    client.patch(FLAG, json={"rollout_percentage": 0})
+    response = evaluate(client, "user-1")
+
+    assert response.headers["x-cache"] == "MISS"
+    assert (response.json()["enabled"], response.json()["reason"]) == (False, "ROLLOUT")
 
 
 def test_setting_an_override_invalidates_the_cache(client, make_flag):
@@ -133,6 +160,21 @@ def test_user_flags_evaluates_every_flag_for_one_user(client, make_flag):
         ("dark-mode", True),
         ("new-checkout", False),
     ]
+
+
+def test_user_flags_applies_rollouts_like_single_evaluation(client, make_flag):
+    make_flag("dark-mode", enabled=True, rollout_percentage=0)
+    make_flag("new-checkout", enabled=True, rollout_percentage=50)
+    make_flag("search-v2", enabled=False, rollout_percentage=50)
+
+    for user in USERS:
+        in_rollout = rollout_bucket("new-checkout", user) < 50
+        assert client.get(f"/api/v1/users/{user}/flags").json()["flags"] == [
+            {"flag_key": "dark-mode", "enabled": False, "reason": "ROLLOUT"},
+            {"flag_key": "new-checkout", "enabled": in_rollout, "reason": "ROLLOUT"},
+            {"flag_key": "search-v2", "enabled": False, "reason": "GLOBAL"},
+        ]
+        assert evaluate(client, user).json()["enabled"] is in_rollout
 
 
 def test_user_flags_is_empty_when_there_are_no_flags(client):

@@ -64,21 +64,23 @@ sequenceDiagram
     participant D as PostgreSQL
     C->>A: GET /api/v1/flags/new-checkout/evaluate?user_id=u1
     A->>S: evaluate("new-checkout", "u1")
-    S->>K: GET ff:flag:new-checkout
+    S->>K: GET ff:flag:v2:new-checkout
     alt cache hit
         K-->>S: snapshot JSON
     else cache miss, or cache unreachable (fail-open)
         S->>D: SELECT the flag by key
         Note over S,D: Unknown flag: 404, and nothing is cached
         S->>D: SELECT user_id, enabled FROM flag_overrides
-        S->>K: SET ff:flag:new-checkout with TTL 60s
+        S->>K: SET ff:flag:v2:new-checkout with TTL 60s
     end
-    S->>S: evaluate(snapshot, "u1"): override wins, else global state
+    S->>S: evaluate(snapshot, "u1"): override, else off switch, else rollout
     S-->>A: evaluation and cache_hit
     A-->>C: 200 with enabled and reason, plus X-Cache HIT or MISS
 ```
 
-- The cached unit is the whole flag (global state plus its overrides), so one entry serves every user of that flag. Evaluation itself is a pure function in `app/evaluation.py`.
+- The cached unit is the whole flag (global state, rollout percentage, and its overrides), so one entry serves every user of that flag. Evaluation itself is a pure function in `app/evaluation.py`.
+- `evaluate()` applies a fixed precedence. The user's override wins (`USER_OVERRIDE`). Otherwise a disabled flag is off (`GLOBAL`), and an enabled flag at a 100% rollout is on (`GLOBAL`). Otherwise the flag is on only when the user's bucket is below the rollout percentage (`ROLLOUT`). The bucket is `sha256("{flag_key}:{user_id}")` reduced to 0-99, so it needs no stored state and every instance computes the same answer.
+- The `v2` in the key is the snapshot format's version. It changes whenever the snapshot's fields change, so instances running different releases during a deploy never read each other's snapshots.
 - If the cache is down, reads fall through to Postgres after at most 0.5s (no retries), so a cache outage costs latency, not errors.
 - `GET /api/v1/users/{user_id}/flags` (every flag for one user) skips the cache: it's one `LEFT JOIN` query from flags to that user's overrides, fed through the same `evaluate()` function.
 
@@ -93,7 +95,7 @@ sequenceDiagram
     C->>S: PATCH /api/v1/flags/new-checkout with enabled true
     S->>D: UPDATE flags SET enabled = true
     S->>D: COMMIT
-    S->>K: DEL ff:flag:new-checkout
+    S->>K: DEL ff:flag:v2:new-checkout
     S-->>C: 200 with the updated flag
     Note over S,K: The next evaluation misses and rebuilds the snapshot from Postgres
 ```

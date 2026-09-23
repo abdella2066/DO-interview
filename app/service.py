@@ -1,8 +1,8 @@
 """Business logic: flag CRUD, per-user overrides, and cached evaluation.
 
-Reads use cache-aside on a per-flag snapshot (global state + overrides). Every write commits to
-Postgres first and only then deletes that snapshot, so the next read rebuilds it from the
-source of truth. The TTL is a safety net for anything invalidation misses.
+Reads use cache-aside on a per-flag snapshot (global state, rollout percentage, overrides). Every
+write commits to Postgres first and only then deletes that snapshot, so the next read rebuilds it
+from the source of truth. The TTL is a safety net for anything invalidation misses.
 """
 
 from psycopg.errors import UniqueViolation
@@ -18,7 +18,9 @@ from app.schemas import FlagCreate, FlagUpdate
 
 
 def snapshot_cache_key(flag_key: str) -> str:
-    return f"ff:flag:{flag_key}"
+    # Bump the version whenever FlagSnapshot's fields change. During a rolling deploy, old and new
+    # instances share the cache, and neither may read a snapshot written by the other.
+    return f"ff:flag:v2:{flag_key}"
 
 
 def _override_map(user_id: str, override: bool | None) -> dict[str, bool]:
@@ -105,10 +107,11 @@ class FlagService:
     async def evaluate_all(self, user_id: str) -> list[tuple[str, Evaluation]]:
         """Every flag for one user, straight from Postgres in a single query (not cached)."""
         rows = await self.repo.list_flags_with_user_override(user_id)
-        return [
-            (key, evaluate(FlagSnapshot(key, enabled, _override_map(user_id, override)), user_id))
-            for key, enabled, override in rows
+        snapshots = [
+            FlagSnapshot(key, enabled, rollout_percentage, _override_map(user_id, override))
+            for key, enabled, rollout_percentage, override in rows
         ]
+        return [(snapshot.key, evaluate(snapshot, user_id)) for snapshot in snapshots]
 
     async def _get_snapshot(self, key: str) -> tuple[FlagSnapshot, bool]:
         cached = await self.cache.get(snapshot_cache_key(key))
@@ -119,6 +122,7 @@ class FlagService:
         snapshot = FlagSnapshot(
             key=flag.key,
             enabled=flag.enabled,
+            rollout_percentage=flag.rollout_percentage,
             overrides=await self.repo.get_override_map(flag.id),
         )
         await self.cache.set(snapshot_cache_key(key), snapshot.to_json(), self.cache_ttl_seconds)

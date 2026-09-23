@@ -1,4 +1,5 @@
-"""Flag CRUD. PATCH with {"enabled": true|false} is the global enable/disable."""
+"""Flag CRUD. PATCH with {"enabled": true|false} is the global enable/disable, and
+{"rollout_percentage": 0-100} limits an enabled flag to that share of users."""
 
 from fastapi import APIRouter, Request, Response, status
 
@@ -29,7 +30,9 @@ async def get_flag(key: FlagKeyPath, service: FlagServiceDep) -> FlagOut:
     return FlagOut.model_validate(await service.get_flag(key))
 
 
-@router.patch("/{key}", summary="Update a flag, including enabling/disabling it globally")
+@router.patch(
+    "/{key}", summary="Update a flag, including its global enable/disable and rollout percentage"
+)
 async def update_flag(key: FlagKeyPath, data: FlagUpdate, service: FlagServiceDep) -> FlagOut:
     return FlagOut.model_validate(await service.update_flag(key, data))
 
