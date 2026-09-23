@@ -18,7 +18,14 @@ services:
       - key: ENVIRONMENT
         scope: RUN_TIME
         value: production
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
       - key: API_KEY
         scope: RUN_TIME
         type: SECRET
         value: ${API_KEY}
+databases:
+  - name: db
+    engine: PG
+    production: false
