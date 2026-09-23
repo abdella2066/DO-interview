@@ -4,7 +4,7 @@ A REST API for feature flags: create flags, turn them on or off globally or for 
 
 Python 3.12, FastAPI, SQLAlchemy 2 (async) with psycopg 3, Alembic, PostgreSQL, and Valkey (Redis-compatible). A GitHub Actions pipeline tests every change and deploys `main` to DigitalOcean App Platform.
 
-- **Live API:** TODO: add the App Platform URL after the first successful deploy
+- **Live API:** https://feature-flags-ly8dk.ondigitalocean.app (send the `X-API-Key` header; `/healthz` and `/readyz` are public)
 - **Interactive API docs:** `/docs` (Swagger UI) on any running instance
 - **Architecture diagrams:** [docs/architecture.md](docs/architecture.md) (deployment, request lifecycle, read path, write path)
 
@@ -55,7 +55,7 @@ Every error uses one shape, and the `request_id` matches the `X-Request-ID` resp
 | 405 | `METHOD_NOT_ALLOWED` | Wrong HTTP method for the path |
 | 409 | `FLAG_ALREADY_EXISTS` | Creating a key that exists (enforced by a unique constraint, so it's race-safe) |
 | 422 | `VALIDATION_ERROR` | Field-level problems, listed in `details` |
-| 503 | `SERVICE_UNAVAILABLE` | Postgres is unreachable |
+| 503 | `SERVICE_UNAVAILABLE` | Postgres is unreachable, or a query ran past `DATABASE_TIMEOUT_SECONDS` |
 | 500 | `INTERNAL_ERROR` | Anything unexpected; logged with the request ID, no stack trace returned |
 
 Validation rules:
@@ -124,6 +124,7 @@ To run the API on your machine with auto-reload instead of in a container: `cp .
 |---|---|---|
 | `ENVIRONMENT` | `development` | `development`, `test`, or `production`. Production refuses to start without `API_KEY`. |
 | `DATABASE_URL` | local Postgres | `postgres://` and `postgresql://` URLs (as DigitalOcean provides them) are rewritten to use the psycopg driver. |
+| `DATABASE_TIMEOUT_SECONDS` | `5` | 1-60. Caps connecting, waiting for a pooled connection, and every SQL statement (Postgres `statement_timeout`). A request that hits it returns 503. |
 | `CACHE_URL` | unset | `redis://` or `rediss://` URL for Valkey/Redis. Unset means the in-memory cache. |
 | `CACHE_TTL_SECONDS` | `60` | 1-3600 |
 | `API_KEY` | unset | Clients send it in the `X-API-Key` header. Unset disables auth (development only). |
@@ -153,7 +154,7 @@ The suite has 152 tests:
 
 The App Platform spec defines one `api` service (Dockerfile build, port 8080, `/readyz` health check), a `PRE_DEPLOY` `migrate` job, and a dev PostgreSQL database whose connection string App Platform injects as `DATABASE_URL`. The pipeline needs two GitHub repo secrets: `DIGITALOCEAN_ACCESS_TOKEN` (to deploy) and `API_KEY` (passed to the app as an encrypted env var).
 
-The very first deploy of a new app shipped without the `migrate` job: App Platform only grants a dev database's user permission to create tables after a deployment succeeds, so migrations were added in the second deploy.
+App Platform only grants a dev database's user permission to create tables after a deployment succeeds, so the `migrate` job must not be in the same deployment that creates a dev database. This app's first deployment was cancelled partway through (a new push cancelled its run), which left the dev database without that permission, and the `migrate` job then failed with `permission denied for schema public`. The fix was DigitalOcean's documented one: remove the dev database and deploy, re-create it and deploy, then re-enable the `migrate` job. The workflow now queues runs on `main` instead of cancelling them.
 
 Deploying somewhere new: fork, add the two secrets, change `repo_clone_url` in `.do/app.yaml`, and push to `main`. The first run creates the app.
 

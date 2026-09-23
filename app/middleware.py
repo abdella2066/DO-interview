@@ -10,7 +10,7 @@ from contextvars import ContextVar
 from fastapi import Request, Response
 
 request_id_var: ContextVar[str | None] = ContextVar("request_id", default=None)
-access_logger = logging.getLogger("app.access")
+access_logger = logging.getLogger(__name__)
 
 
 class JsonFormatter(logging.Formatter):

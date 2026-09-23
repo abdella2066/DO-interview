@@ -12,6 +12,7 @@ class Settings(BaseSettings):
 
     environment: Literal["development", "test", "production"] = "development"
     database_url: str = "postgresql+psycopg://postgres:postgres@localhost:5432/featureflags"
+    database_timeout_seconds: int = Field(default=5, ge=1, le=60)
     cache_url: str | None = None
     cache_ttl_seconds: int = Field(default=60, ge=1, le=3600)
     api_key: str | None = None
