@@ -42,7 +42,7 @@ All `/api/v1` endpoints need an `X-API-Key` header. The health probes are public
 | `GET` | `/api/v1/users/{user_id}/flags` | Evaluate every flag for a user in one call (for SDKs loading a page) | `200` |
 | `GET` | `/api/v1/flags/{key}/audit?limit=50&offset=0` | A flag's change history, newest first; kept after the flag is deleted | `200` |
 | `GET` | `/healthz` | Liveness: the process is up | `200` |
-| `GET` | `/readyz` | Readiness: Postgres answers; cache reported as `ok` or `degraded` | `200` / `503` |
+| `GET` | `/readyz` | Readiness: Postgres answers. The cache is reported as `ok` or `degraded`, along with the active backend (`memory`, or `redis` for Valkey) | `200` / `503` |
 
 ### Errors and validation
 
@@ -169,7 +169,7 @@ make test                                         # in-memory cache variants onl
 TEST_CACHE_URL=redis://localhost:6379/1 make test  # also runs every API test against Valkey (CI does this)
 ```
 
-The suite has 252 tests:
+The suite has 254 tests:
 
 - **Unit:** evaluation precedence, rollout bucketing (determinism, monotonicity, distribution, and independence across flags), snapshot serialization, in-memory cache TTL and eviction (with a fake clock), Redis fail-open (including a check that it fails fast), and config parsing.
 - **Integration:** FastAPI's `TestClient` against real Postgres, migrated with the real Alembic migrations and truncated before each test. Covers every endpoint and status code, the validation rules above, API key auth, the error envelope, request IDs, a database outage (503), cache hits and misses, and invalidation after every kind of write. The audit log tests cover each action's event, that rejected or failed writes leave no event, and that a failed audit insert rolls back its change. A few tests check the rules the database enforces on its own: the rollout default and range.

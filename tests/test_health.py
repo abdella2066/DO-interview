@@ -17,6 +17,13 @@ def test_readiness_is_ok_when_database_answers(client):
     assert response.json()["database"] == "ok"
 
 
+def test_readiness_reports_the_active_cache_backend(client, settings):
+    body = client.get("/readyz").json()
+
+    assert body["cache"] == "ok"
+    assert body["cache_backend"] == ("redis" if settings.cache_url else "memory")
+
+
 def test_readiness_is_503_when_database_is_down(settings):
     unreachable = "postgresql+psycopg://postgres:postgres@localhost:1/nope"
     app = create_app(settings.model_copy(update={"database_url": unreachable}))

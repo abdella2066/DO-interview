@@ -20,6 +20,8 @@ CACHE_ERRORS = (redis.RedisError, OSError)
 
 
 class Cache(Protocol):
+    backend: str
+
     async def get(self, key: str) -> str | None: ...
 
     async def set(self, key: str, value: str, ttl_seconds: int) -> None: ...
@@ -33,6 +35,8 @@ class Cache(Protocol):
 
 class MemoryCache:
     """Per-process TTL cache. Expired entries are dropped when read; total size is capped."""
+
+    backend = "memory"
 
     def __init__(
         self, max_entries: int = 10_000, clock: Callable[[], float] = time.monotonic
@@ -68,6 +72,8 @@ class MemoryCache:
 
 class RedisCache:
     """Valkey/Redis cache with short socket timeouts, so an outage can't stall requests."""
+
+    backend = "redis"
 
     def __init__(self, url: str) -> None:
         self._client = redis.from_url(
