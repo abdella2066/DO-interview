@@ -1,6 +1,6 @@
 # DigitalOcean App Platform spec, applied by GitHub Actions (digitalocean/app_action) on every
 # push to main once tests pass. ${API_KEY} is filled in from the GitHub secret at deploy time;
-# ${db.DATABASE_URL} is resolved by App Platform itself.
+# ${db.DATABASE_URL} and ${cache.DATABASE_URL} are resolved by App Platform itself.
 name: feature-flags
 region: nyc
 services:
@@ -10,7 +10,8 @@ services:
       branch: main
     dockerfile_path: Dockerfile
     http_port: 8080
-    instance_count: 1
+    # Two instances are safe because they share the Valkey cache: one invalidation reaches both.
+    instance_count: 2
     instance_size_slug: apps-s-1vcpu-1gb
     health_check:
       http_path: /readyz
@@ -21,6 +22,9 @@ services:
       - key: DATABASE_URL
         scope: RUN_TIME
         value: ${db.DATABASE_URL}
+      - key: CACHE_URL
+        scope: RUN_TIME
+        value: ${cache.DATABASE_URL}
       - key: API_KEY
         scope: RUN_TIME
         type: SECRET
@@ -43,3 +47,7 @@ databases:
   - name: db
     engine: PG
     production: false
+  - name: cache
+    engine: VALKEY
+    production: true
+    cluster_name: feature-flags-cache

@@ -115,7 +115,7 @@ curl -s $API/api/v1/flags/new-checkout/audit -H "X-API-Key: $KEY"
 - **What's cached:** one snapshot per flag (global state, rollout percentage, and all of its overrides) under `ff:flag:v2:{key}`, with a TTL of `CACHE_TTL_SECONDS` (60 by default). Evaluation is computed in-process from the snapshot, so one entry serves every user of that flag. `v2` is the snapshot format's version (see design decisions).
 - **Reads** are cache-aside: try the cache, otherwise load from Postgres and store the snapshot.
 - **Writes** commit to Postgres first and then delete the snapshot, so the next read rebuilds it from the source of truth.
-- **Backends:** Valkey or Redis when `CACHE_URL` is set, shared by every instance so one invalidation reaches all of them. Without it, an in-memory cache per process, which is only correct with a single instance.
+- **Backends:** Valkey or Redis when `CACHE_URL` is set, shared by every instance so one invalidation reaches all of them. Without it, an in-memory cache per process, which is only correct with a single instance. Production runs two instances against a managed Valkey cluster (`feature-flags-cache`).
 - **Fail-open:** if the cache errors or times out (0.5s, no retries), the request is served from Postgres and a warning is logged.
 
 ## Audit log
@@ -184,9 +184,14 @@ The suite has 252 tests:
 3. **docker:** builds the production image.
 4. **deploy** (pushes to `main` only, after the first three pass): `digitalocean/app_action` applies [`.do/app.yaml`](.do/app.yaml). App Platform builds the `Dockerfile`, runs the `migrate` job (`alembic upgrade head`) before the new version starts, then rolls it out behind the `/readyz` health check. The job waits and fails if the deployment fails.
 
-The App Platform spec defines one `api` service (Dockerfile build, port 8080, `/readyz` health check), a `PRE_DEPLOY` `migrate` job, and a dev PostgreSQL database whose connection string App Platform injects as `DATABASE_URL`. The pipeline needs two GitHub repo secrets: `DIGITALOCEAN_ACCESS_TOKEN` (to deploy) and `API_KEY` (passed to the app as an encrypted env var).
+The App Platform spec defines:
 
-App Platform only grants a dev database's user permission to create tables after a deployment succeeds, so the `migrate` job must not be in the same deployment that creates a dev database. This app's first deployment was cancelled partway through (a new push cancelled its run), which left the dev database without that permission, and the `migrate` job then failed with `permission denied for schema public`. The fix was DigitalOcean's documented one: remove the dev database and deploy, re-create it and deploy, then re-enable the `migrate` job. The workflow now queues runs on `main` instead of cancelling them.
+- one `api` service: two instances, Dockerfile build, port 8080, `/readyz` health check;
+- a `PRE_DEPLOY` `migrate` job;
+- a dev PostgreSQL database, whose connection string App Platform injects as `DATABASE_URL`;
+- a managed Valkey cluster (`feature-flags-cache`), created in the control panel, attached by name, and injected as `CACHE_URL`. Attaching it adds the app to the cluster's trusted sources. The pipeline needs two GitHub repo secrets: `DIGITALOCEAN_ACCESS_TOKEN` (to deploy) and `API_KEY` (passed to the app as an encrypted env var).
+
+App Platform only grants a dev database's user permission to create tables after a deployment succeeds, so the `migrate` job must not be in the same deployment that creates a dev database. The GitHub Actions run that created this app was cancelled by a newer push while its first deployment was still pending (`PENDING_BUILD`). The dev database never received that permission, and the `migrate` job later failed with `permission denied for schema public`. The fix was DigitalOcean's documented one: remove the dev database and deploy, re-create it and deploy, then re-enable the `migrate` job. The workflow now queues runs on `main` instead of cancelling them.
 
 Deploying somewhere new: fork, add the two secrets, change `repo_clone_url` in `.do/app.yaml`, and push to `main`. The first run creates the app.
 
@@ -206,6 +211,7 @@ Deploying somewhere new: fork, add the two secrets, change `repo_clone_url` in `
 - **Race-safe writes in the database.** Duplicate keys are caught by a unique constraint (409), and overrides use an atomic `INSERT ... ON CONFLICT DO UPDATE`.
 - **Offset pagination and a single API key** keep the surface small. Cursor pagination and per-client scoped keys are the upgrade path.
 - **App Platform dev database.** Quick to provision but single-node without backups. Production would use a managed PostgreSQL cluster (`production: true` in the spec).
+- **Single-node managed Valkey.** The smallest plan, without a standby node. Because the cache fails open, a Valkey outage makes requests slower, not failed. A standby node (high availability) is the upgrade path.
 
 ## Next steps
 
@@ -216,7 +222,7 @@ Deploying somewhere new: fork, add the two secrets, change `repo_clone_url` in `
 - Per-client API keys with scopes, which would also give the audit log a verified actor, and rate limiting.
 - A retention policy for the audit log, which grows without limit today.
 - Metrics and tracing (Prometheus or OpenTelemetry), including the cache hit ratio.
-- Managed Valkey in production and multiple instances; stampede protection for hot keys.
+- Stampede protection for hot keys, so only one request rebuilds a missing snapshot.
 
 ## Project layout
 

@@ -20,7 +20,7 @@ flowchart LR
 ```
 
 - **Postgres** is the source of truth for flags, overrides, and the audit log. Schema changes ship as Alembic migrations, run by a `PRE_DEPLOY` job before new code takes traffic.
-- **Valkey** is optional. With `CACHE_URL` unset, each process uses its own in-memory cache, which is only correct with a single instance.
+- **Valkey** holds the shared cache. Production attaches a managed Valkey cluster (`feature-flags-cache`) and runs two instances of the service, so one invalidation reaches both. With `CACHE_URL` unset (local runs and tests), each process uses its own in-memory cache, which is only correct with a single instance.
 - **App Platform** routes traffic only to instances whose health check passes, and replaces instances one at a time on deploy.
 
 ## 2. Request lifecycle
