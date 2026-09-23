@@ -2,7 +2,7 @@
 # push to main once tests pass. ${API_KEY} is filled in from the GitHub secret at deploy time;
 # ${db.DATABASE_URL} is resolved by App Platform itself.
 name: feature-flags
-region: sfo
+region: nyc
 services:
   - name: api
     git:
@@ -11,7 +11,7 @@ services:
     dockerfile_path: Dockerfile
     http_port: 8080
     instance_count: 1
-    instance_size_slug: apps-s-1vcpu-0.5gb
+    instance_size_slug: apps-s-1vcpu-1gb
     health_check:
       http_path: /healthz
     envs:
