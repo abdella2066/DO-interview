@@ -1,10 +1,12 @@
 """All SQL lives here; the service layer calls these methods and never builds queries itself."""
 
+from typing import Any
+
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Flag, FlagOverride
+from app.models import AuditAction, Flag, FlagAuditEvent, FlagOverride
 
 
 class FlagRepository:
@@ -101,3 +103,28 @@ class FlagRepository:
             )
         )
         return {user_id: enabled for user_id, enabled in rows}
+
+    def add_audit_event(
+        self, flag_key: str, action: AuditAction, actor: str | None, details: dict[str, Any]
+    ) -> None:
+        """Adds the event to the open transaction; the caller's commit saves it with the change."""
+        self.session.add(
+            FlagAuditEvent(flag_key=flag_key, action=action, actor=actor, details=details)
+        )
+
+    async def list_audit_events(
+        self, flag_key: str, limit: int, offset: int
+    ) -> tuple[list[FlagAuditEvent], int]:
+        total = await self.session.scalar(
+            select(func.count())
+            .select_from(FlagAuditEvent)
+            .where(FlagAuditEvent.flag_key == flag_key)
+        )
+        events = await self.session.scalars(
+            select(FlagAuditEvent)
+            .where(FlagAuditEvent.flag_key == flag_key)
+            .order_by(FlagAuditEvent.created_at.desc(), FlagAuditEvent.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return list(events), total or 0

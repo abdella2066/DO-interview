@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Depends, FastAPI
 
-from app.api import evaluate, flags, health, overrides
+from app.api import audit, evaluate, flags, health, overrides
 from app.cache import build_cache
 from app.config import Settings, get_settings
 from app.db import create_engine, create_session_factory
@@ -48,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     api_v1.include_router(flags.router)
     api_v1.include_router(overrides.router)
     api_v1.include_router(evaluate.router)
+    api_v1.include_router(audit.router)
 
     app.include_router(health.router)
     app.include_router(api_v1)

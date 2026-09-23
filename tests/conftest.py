@@ -37,7 +37,9 @@ def database_engine() -> Iterator[Engine]:
 @pytest.fixture
 def clean_database(database_engine: Engine) -> None:
     with database_engine.begin() as connection:
-        connection.execute(text("TRUNCATE flag_overrides, flags RESTART IDENTITY CASCADE"))
+        connection.execute(
+            text("TRUNCATE flag_audit_events, flag_overrides, flags RESTART IDENTITY CASCADE")
+        )
 
 
 @pytest.fixture(params=["memory-cache", "valkey-cache"])

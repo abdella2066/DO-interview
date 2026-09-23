@@ -1,12 +1,15 @@
-"""Database tables: a flag, and per-user overrides of that flag's global state."""
+"""Database tables: a flag, per-user overrides of that flag's global state, and the audit log."""
 
 from datetime import datetime
+from enum import StrEnum
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -14,6 +17,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -58,3 +62,26 @@ class FlagOverride(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class AuditAction(StrEnum):
+    FLAG_CREATED = "flag.created"
+    FLAG_UPDATED = "flag.updated"
+    FLAG_DELETED = "flag.deleted"
+    OVERRIDE_SET = "override.set"
+    OVERRIDE_DELETED = "override.deleted"
+
+
+class FlagAuditEvent(Base):
+    __tablename__ = "flag_audit_events"
+    __table_args__ = (
+        Index("ix_flag_audit_events_flag_key_created_at_id", "flag_key", "created_at", "id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Deliberately not a foreign key to flags, so a flag's history outlives the flag.
+    flag_key: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(32))
+    actor: Mapped[str | None] = mapped_column(String(100))
+    details: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

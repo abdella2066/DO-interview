@@ -1,6 +1,6 @@
 # Architecture
 
-Four views of the service: how it's deployed, what happens to every request, how an evaluation is served (the hot path), and how writes keep the cache correct.
+Four views of the service: how it's deployed, what happens to every request, how an evaluation is served (the hot path), and how writes record an audit event and keep the cache correct.
 
 ## 1. System and deployment
 
@@ -19,13 +19,13 @@ flowchart LR
     Service -.->|"CACHE_URL set"| Valkey[("Valkey: shared cache")]
 ```
 
-- **Postgres** is the source of truth for flags and overrides. Schema changes ship as Alembic migrations, run by a `PRE_DEPLOY` job before new code takes traffic.
+- **Postgres** is the source of truth for flags, overrides, and the audit log. Schema changes ship as Alembic migrations, run by a `PRE_DEPLOY` job before new code takes traffic.
 - **Valkey** is optional. With `CACHE_URL` unset, each process uses its own in-memory cache, which is only correct with a single instance.
 - **App Platform** routes traffic only to instances whose health check passes, and replaces instances one at a time on deploy.
 
 ## 2. Request lifecycle
 
-The order of checks below was verified against the running container: an unknown route is 404 even without an API key, malformed JSON is 400 before the key is checked, and a missing key is 401 before field validation.
+The order of checks below was verified against the running container: an unknown route is 404 even without an API key, malformed JSON is 400 before the key is checked, and a missing key is 401 before field validation. The `X-Actor` header, added later, is validated in the same step as the path, query, and body; a test checks that a missing key is still a 401 first.
 
 ```mermaid
 flowchart TD
@@ -36,7 +36,7 @@ flowchart TD
     Parse -->|no| Malformed["400 MALFORMED_JSON"]
     Parse -->|yes| Auth{"X-API-Key valid?"}
     Auth -->|no| Unauthorized["401 UNAUTHORIZED"]
-    Auth -->|yes| Validate{"Path, query, body valid?"}
+    Auth -->|yes| Validate{"Path, query, headers, body valid?"}
     Validate -->|no| Invalid["422 VALIDATION_ERROR with field details"]
     Validate -->|yes| Handler["Route handler: app/api"]
     Handler --> Service["FlagService: app/service.py"]
@@ -94,12 +94,14 @@ sequenceDiagram
     participant K as Cache
     C->>S: PATCH /api/v1/flags/new-checkout with enabled true
     S->>D: UPDATE flags SET enabled = true
+    S->>D: INSERT INTO flag_audit_events (flag.updated, actor, changed fields)
     S->>D: COMMIT
     S->>K: DEL ff:flag:v2:new-checkout
     S-->>C: 200 with the updated flag
     Note over S,K: The next evaluation misses and rebuilds the snapshot from Postgres
 ```
 
+- Every write adds its audit event in the same transaction, before the `COMMIT`, so the change and its event are committed or rolled back together. A rejected write (409 or 404) leaves no event, and if the audit `INSERT` fails, the change is rolled back and the request returns 500.
 - Every write (create, update, delete, override set or removed) commits first and deletes the flag's snapshot second. Deleting before the commit would let a concurrent read re-cache the old row.
 - One rarer race remains: a read that loaded the old row before the commit can write it to the cache just after the delete. The TTL (60s by default) caps how long that stale entry can live. The same TTL covers a failed `DEL` during a cache outage.
-- Deleting a flag cascades to its overrides in Postgres (`ON DELETE CASCADE`) and removes its snapshot, so re-creating a flag with the same key starts clean.
+- Deleting a flag cascades to its overrides in Postgres (`ON DELETE CASCADE`) and removes its snapshot, so re-creating a flag with the same key starts clean. Its audit events stay: they reference the flag by key, not by a foreign key, so a re-created flag's history continues the old one.

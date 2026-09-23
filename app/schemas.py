@@ -1,9 +1,9 @@
 """Request/response models and parameter rules. Validation failures become 422 responses."""
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import Path, Query
+from fastapi import Header, Path, Query
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -15,9 +15,12 @@ from pydantic import (
 )
 
 from app.evaluation import Reason
+from app.models import AuditAction
 
 FLAG_KEY_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 USER_ID_PATTERN = r"^[A-Za-z0-9._:@+-]{1,128}$"
+# Printable ASCII only: header bytes are decoded as Latin-1, so UTF-8 names would be stored garbled.
+ACTOR_PATTERN = r"^[ -~]+$"
 
 FlagKey = Annotated[str, StringConstraints(pattern=FLAG_KEY_PATTERN)]
 FlagName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
@@ -30,6 +33,16 @@ UserIdPath = Annotated[str, Path(pattern=USER_ID_PATTERN, description="Your syst
 UserIdQuery = Annotated[str, Query(pattern=USER_ID_PATTERN, description="User to evaluate for")]
 Limit = Annotated[int, Query(ge=1, le=100)]
 Offset = Annotated[int, Query(ge=0)]
+ActorHeader = Annotated[
+    str | None,
+    Header(
+        alias="X-Actor",
+        max_length=100,
+        pattern=ACTOR_PATTERN,
+        description="Who is making the change. Writes record it in the audit log; reads only "
+        "validate it. Self-reported: the service can't verify it.",
+    ),
+]
 
 
 class RequestModel(BaseModel):
@@ -128,3 +141,19 @@ class UserFlag(BaseModel):
 class UserFlagsOut(BaseModel):
     user_id: str
     flags: list[UserFlag]
+
+
+class AuditEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    action: AuditAction
+    actor: str | None
+    details: dict[str, Any]
+    created_at: datetime
+
+
+class AuditEventList(BaseModel):
+    items: list[AuditEventOut]
+    total: int
+    limit: int
+    offset: int
