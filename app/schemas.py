@@ -1,25 +1,48 @@
 """Request/response models and parameter rules. Validation failures become 422 responses."""
 
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import Path, Query
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StringConstraints, model_validator
+from fastapi import Header, Path, Query
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StringConstraints,
+    model_validator,
+)
 
 from app.evaluation import Reason
+from app.models import AuditAction
 
 FLAG_KEY_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 USER_ID_PATTERN = r"^[A-Za-z0-9._:@+-]{1,128}$"
+# Printable ASCII only: header bytes are decoded as Latin-1, so UTF-8 names would be stored garbled.
+ACTOR_PATTERN = r"^[ -~]+$"
 
 FlagKey = Annotated[str, StringConstraints(pattern=FLAG_KEY_PATTERN)]
 FlagName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 FlagDescription = Annotated[str, StringConstraints(strip_whitespace=True, max_length=500)]
+# Strict: "50", 50.5, 50.0, and true are rejected rather than coerced.
+RolloutPercentage = Annotated[StrictInt, Field(ge=0, le=100)]
 
 FlagKeyPath = Annotated[str, Path(pattern=FLAG_KEY_PATTERN, description="Flag key")]
 UserIdPath = Annotated[str, Path(pattern=USER_ID_PATTERN, description="Your system's user ID")]
 UserIdQuery = Annotated[str, Query(pattern=USER_ID_PATTERN, description="User to evaluate for")]
 Limit = Annotated[int, Query(ge=1, le=100)]
 Offset = Annotated[int, Query(ge=0)]
+ActorHeader = Annotated[
+    str | None,
+    Header(
+        alias="X-Actor",
+        max_length=100,
+        pattern=ACTOR_PATTERN,
+        description="Who is making the change. Writes record it in the audit log; reads only "
+        "validate it. Self-reported: the service can't verify it.",
+    ),
+]
 
 
 class RequestModel(BaseModel):
@@ -37,6 +60,9 @@ class FlagCreate(RequestModel):
     enabled: StrictBool = Field(
         default=False, description="Global state: what every user gets unless overridden"
     )
+    rollout_percentage: RolloutPercentage = Field(
+        default=100, description="Share of users (0-100) who get the flag while it's enabled"
+    )
 
 
 class FlagUpdate(RequestModel):
@@ -45,12 +71,17 @@ class FlagUpdate(RequestModel):
     enabled: StrictBool | None = Field(
         default=None, description="true/false enables/disables the flag globally"
     )
+    rollout_percentage: RolloutPercentage | None = Field(
+        default=None, description="Share of users (0-100) who get the flag while it's enabled"
+    )
 
     @model_validator(mode="after")
     def reject_empty_or_null(self) -> "FlagUpdate":
         if not self.model_fields_set:
-            raise ValueError("Provide at least one of: name, description, enabled")
-        for field in ("name", "enabled"):
+            raise ValueError(
+                "Provide at least one of: name, description, enabled, rollout_percentage"
+            )
+        for field in ("name", "enabled", "rollout_percentage"):
             if field in self.model_fields_set and getattr(self, field) is None:
                 raise ValueError(f"'{field}' cannot be null")
         return self
@@ -67,6 +98,7 @@ class FlagOut(BaseModel):
     name: str
     description: str | None
     enabled: bool
+    rollout_percentage: int
     created_at: datetime
     updated_at: datetime
 
@@ -109,3 +141,19 @@ class UserFlag(BaseModel):
 class UserFlagsOut(BaseModel):
     user_id: str
     flags: list[UserFlag]
+
+
+class AuditEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    action: AuditAction
+    actor: str | None
+    details: dict[str, Any]
+    created_at: datetime
+
+
+class AuditEventList(BaseModel):
+    items: list[AuditEventOut]
+    total: int
+    limit: int
+    offset: int

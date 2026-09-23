@@ -11,6 +11,7 @@ from app.cache import Cache
 from app.config import Settings
 from app.db import get_session
 from app.errors import UnauthorizedError
+from app.schemas import ActorHeader
 from app.service import FlagService
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -24,12 +25,17 @@ def get_cache(request: Request) -> Cache:
     return request.app.state.cache
 
 
+def get_actor(actor: ActorHeader = None) -> str | None:
+    return actor
+
+
 def get_flag_service(
     session: Annotated[AsyncSession, Depends(get_session)],
     cache: Annotated[Cache, Depends(get_cache)],
     settings: Annotated[Settings, Depends(get_app_settings)],
+    actor: Annotated[str | None, Depends(get_actor)],
 ) -> FlagService:
-    return FlagService(session, cache, settings.cache_ttl_seconds)
+    return FlagService(session, cache, settings.cache_ttl_seconds, actor)
 
 
 async def require_api_key(

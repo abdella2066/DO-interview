@@ -20,6 +20,7 @@ def test_create_flag_returns_201_with_location(client):
     assert body["name"] == "New checkout"
     assert body["description"] == "Redesign"
     assert body["enabled"] is False
+    assert body["rollout_percentage"] == 100
     assert body["created_at"] and body["updated_at"]
 
 
@@ -28,6 +29,27 @@ def test_create_flag_can_start_enabled(client):
 
     assert response.status_code == 201
     assert response.json()["enabled"] is True
+
+
+@pytest.mark.parametrize("percentage", [0, 10, 100])
+def test_create_flag_with_a_rollout(client, percentage):
+    payload = {"key": "new-checkout", "name": "New checkout", "rollout_percentage": percentage}
+
+    response = client.post(FLAGS, json=payload)
+
+    assert response.status_code == 201
+    assert response.json()["rollout_percentage"] == percentage
+
+
+def test_patch_changes_the_rollout(client, make_flag):
+    make_flag("new-checkout", enabled=True, rollout_percentage=10)
+
+    response = client.patch(f"{FLAGS}/new-checkout", json={"rollout_percentage": 50})
+
+    assert response.status_code == 200
+    assert response.json()["rollout_percentage"] == 50
+    assert response.json()["enabled"] is True
+    assert client.get(f"{FLAGS}/new-checkout").json()["rollout_percentage"] == 50
 
 
 def test_duplicate_key_returns_409(client, make_flag):
@@ -51,6 +73,13 @@ def test_duplicate_key_returns_409(client, make_flag):
         {"key": "ok-key"},
         {"key": "ok-key", "name": "typo in field", "enable": True},
         {"key": "ok-key", "name": "string boolean", "enabled": "yes"},
+        {"key": "ok-key", "name": "string rollout", "rollout_percentage": "50"},
+        {"key": "ok-key", "name": "float rollout", "rollout_percentage": 50.5},
+        {"key": "ok-key", "name": "whole float rollout", "rollout_percentage": 50.0},
+        {"key": "ok-key", "name": "boolean rollout", "rollout_percentage": True},
+        {"key": "ok-key", "name": "null rollout", "rollout_percentage": None},
+        {"key": "ok-key", "name": "negative rollout", "rollout_percentage": -1},
+        {"key": "ok-key", "name": "rollout over 100", "rollout_percentage": 101},
     ],
 )
 def test_invalid_create_payload_returns_422(client, payload):
@@ -131,7 +160,19 @@ def test_patch_updates_metadata_and_updated_at(client, make_flag):
 
 @pytest.mark.parametrize(
     "payload",
-    [{}, {"name": None}, {"enabled": None}, {"enabled": "false"}, {"key": "renamed"}],
+    [
+        {},
+        {"name": None},
+        {"enabled": None},
+        {"enabled": "false"},
+        {"key": "renamed"},
+        {"rollout_percentage": "50"},
+        {"rollout_percentage": 50.5},
+        {"rollout_percentage": True},
+        {"rollout_percentage": None},
+        {"rollout_percentage": -1},
+        {"rollout_percentage": 101},
+    ],
 )
 def test_invalid_patch_returns_422(client, make_flag, payload):
     make_flag("new-checkout")
