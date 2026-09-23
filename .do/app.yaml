@@ -13,7 +13,7 @@ services:
     instance_count: 1
     instance_size_slug: apps-s-1vcpu-1gb
     health_check:
-      http_path: /healthz
+      http_path: /readyz
     envs:
       - key: ENVIRONMENT
         scope: RUN_TIME
@@ -25,6 +25,20 @@ services:
         scope: RUN_TIME
         type: SECRET
         value: ${API_KEY}
+jobs:
+  - name: migrate
+    kind: PRE_DEPLOY
+    git:
+      repo_clone_url: https://github.com/abdella2066/DO-interview.git
+      branch: main
+    dockerfile_path: Dockerfile
+    run_command: alembic upgrade head
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-1gb
+    envs:
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
 databases:
   - name: db
     engine: PG

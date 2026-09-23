@@ -98,3 +98,14 @@ class EvaluationOut(BaseModel):
     user_id: str
     enabled: bool
     reason: Reason
+
+
+class UserFlag(BaseModel):
+    flag_key: str
+    enabled: bool
+    reason: Reason
+
+
+class UserFlagsOut(BaseModel):
+    user_id: str
+    flags: list[UserFlag]

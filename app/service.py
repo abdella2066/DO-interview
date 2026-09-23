@@ -21,6 +21,10 @@ def snapshot_cache_key(flag_key: str) -> str:
     return f"ff:flag:{flag_key}"
 
 
+def _override_map(user_id: str, override: bool | None) -> dict[str, bool]:
+    return {} if override is None else {user_id: override}
+
+
 class FlagService:
     def __init__(self, session: AsyncSession, cache: Cache, cache_ttl_seconds: int) -> None:
         self.session = session
@@ -97,6 +101,14 @@ class FlagService:
         """Returns (evaluation, cache_hit)."""
         snapshot, cache_hit = await self._get_snapshot(key)
         return evaluate(snapshot, user_id), cache_hit
+
+    async def evaluate_all(self, user_id: str) -> list[tuple[str, Evaluation]]:
+        """Every flag for one user, straight from Postgres in a single query (not cached)."""
+        rows = await self.repo.list_flags_with_user_override(user_id)
+        return [
+            (key, evaluate(FlagSnapshot(key, enabled, _override_map(user_id, override)), user_id))
+            for key, enabled, override in rows
+        ]
 
     async def _get_snapshot(self, key: str) -> tuple[FlagSnapshot, bool]:
         cached = await self.cache.get(snapshot_cache_key(key))

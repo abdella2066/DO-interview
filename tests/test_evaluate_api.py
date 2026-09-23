@@ -113,6 +113,39 @@ def test_deleted_flag_is_not_served_from_the_cache(client, make_flag):
     assert evaluate(client, "user-1").status_code == 404
 
 
+def test_user_flags_evaluates_every_flag_for_one_user(client, make_flag):
+    make_flag("new-checkout", enabled=False)
+    make_flag("dark-mode", enabled=True)
+    client.put(f"{FLAG}/overrides/beta-tester", json={"enabled": True})
+
+    tester = client.get("/api/v1/users/beta-tester/flags")
+    other = client.get("/api/v1/users/someone-else/flags")
+
+    assert tester.status_code == 200
+    assert tester.json() == {
+        "user_id": "beta-tester",
+        "flags": [
+            {"flag_key": "dark-mode", "enabled": True, "reason": "GLOBAL"},
+            {"flag_key": "new-checkout", "enabled": True, "reason": "USER_OVERRIDE"},
+        ],
+    }
+    assert [(f["flag_key"], f["enabled"]) for f in other.json()["flags"]] == [
+        ("dark-mode", True),
+        ("new-checkout", False),
+    ]
+
+
+def test_user_flags_is_empty_when_there_are_no_flags(client):
+    response = client.get("/api/v1/users/user-1/flags")
+
+    assert response.status_code == 200
+    assert response.json() == {"user_id": "user-1", "flags": []}
+
+
+def test_user_flags_rejects_invalid_user_id(client):
+    assert client.get("/api/v1/users/has space/flags").status_code == 422
+
+
 def test_recreated_flag_does_not_inherit_stale_state(client, make_flag):
     make_flag("new-checkout", enabled=True)
     client.put(f"{FLAG}/overrides/user-1", json={"enabled": False})

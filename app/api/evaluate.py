@@ -3,7 +3,14 @@
 from fastapi import APIRouter, Response
 
 from app.dependencies import FlagServiceDep
-from app.schemas import EvaluationOut, FlagKeyPath, UserIdQuery
+from app.schemas import (
+    EvaluationOut,
+    FlagKeyPath,
+    UserFlag,
+    UserFlagsOut,
+    UserIdPath,
+    UserIdQuery,
+)
 
 router = APIRouter(tags=["evaluation"])
 
@@ -22,3 +29,18 @@ async def evaluate_flag(
     return EvaluationOut(
         flag_key=key, user_id=user_id, enabled=result.enabled, reason=result.reason
     )
+
+
+@router.get(
+    "/users/{user_id}/flags",
+    summary="Evaluate every flag for a user",
+    description="One call for SDKs to load all flags for a user, sorted by key. "
+    "Same precedence as single evaluation.",
+)
+async def evaluate_all_flags(user_id: UserIdPath, service: FlagServiceDep) -> UserFlagsOut:
+    results = await service.evaluate_all(user_id)
+    flags = [
+        UserFlag(flag_key=key, enabled=result.enabled, reason=result.reason)
+        for key, result in results
+    ]
+    return UserFlagsOut(user_id=user_id, flags=flags)

@@ -76,6 +76,20 @@ class FlagRepository:
         )
         return list(overrides), total or 0
 
+    async def list_flags_with_user_override(
+        self, user_id: str
+    ) -> list[tuple[str, bool, bool | None]]:
+        """(key, global state, this user's override or None) for every flag, in one query."""
+        rows = await self.session.execute(
+            select(Flag.key, Flag.enabled, FlagOverride.enabled)
+            .outerjoin(
+                FlagOverride,
+                (FlagOverride.flag_id == Flag.id) & (FlagOverride.user_id == user_id),
+            )
+            .order_by(Flag.key)
+        )
+        return [(key, enabled, override) for key, enabled, override in rows]
+
     async def get_override_map(self, flag_id: int) -> dict[str, bool]:
         rows = await self.session.execute(
             select(FlagOverride.user_id, FlagOverride.enabled).where(
