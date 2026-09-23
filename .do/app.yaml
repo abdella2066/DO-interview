@@ -1,0 +1,31 @@
+# DigitalOcean App Platform spec, applied by GitHub Actions (digitalocean/app_action) on every
+# push to main once tests pass. ${API_KEY} is filled in from the GitHub secret at deploy time;
+# ${db.DATABASE_URL} is resolved by App Platform itself.
+name: feature-flags
+region: sfo
+services:
+  - name: api
+    git:
+      repo_clone_url: https://github.com/abdella2066/DO-interview.git
+      branch: main
+    dockerfile_path: Dockerfile
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    health_check:
+      http_path: /healthz
+    envs:
+      - key: ENVIRONMENT
+        scope: RUN_TIME
+        value: production
+      - key: DATABASE_URL
+        scope: RUN_TIME
+        value: ${db.DATABASE_URL}
+      - key: API_KEY
+        scope: RUN_TIME
+        type: SECRET
+        value: ${API_KEY}
+databases:
+  - name: db
+    engine: PG
+    production: false

@@ -1,0 +1,46 @@
+# Local stack for OrbStack (or Docker Desktop): Postgres, Valkey, and the API.
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: featureflags
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./scripts/create-test-db.sql:/docker-entrypoint-initdb.d/create-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d featureflags"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  cache:
+    image: valkey/valkey:8-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/featureflags
+      CACHE_URL: redis://cache:6379/0
+      API_KEY: local-dev-key
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+
+volumes:
+  pgdata:
