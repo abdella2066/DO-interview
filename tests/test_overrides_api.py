@@ -2,6 +2,8 @@ from datetime import datetime
 
 import pytest
 
+from app.schemas import PATTERN_HINTS
+
 OVERRIDES = "/api/v1/flags/new-checkout/overrides"
 
 
@@ -37,6 +39,9 @@ def test_invalid_user_id_returns_422(client, make_flag, user_id):
     response = client.put(f"{OVERRIDES}/{user_id}", json={"enabled": True})
 
     assert response.status_code == 422
+    assert response.json()["error"]["details"] == [
+        {"field": "path.user_id", "message": PATTERN_HINTS["user_id"]}
+    ]
 
 
 @pytest.mark.parametrize(

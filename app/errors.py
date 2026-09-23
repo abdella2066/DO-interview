@@ -13,7 +13,15 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.schemas import PATTERN_HINTS
+
 logger = logging.getLogger(__name__)
+
+
+def field_message(error: dict[str, Any]) -> str:
+    if error["type"] == "string_pattern_mismatch":
+        return PATTERN_HINTS.get(str(error["loc"][-1]), error["msg"])
+    return error["msg"]
 
 
 class AppError(Exception):
@@ -46,7 +54,9 @@ class FlagAlreadyExistsError(AppError):
     code = "FLAG_ALREADY_EXISTS"
 
     def __init__(self, key: str) -> None:
-        super().__init__(f"Flag '{key}' already exists")
+        super().__init__(
+            f"A flag with key '{key}' already exists (keys are unique regardless of case)"
+        )
 
 
 class UnauthorizedError(AppError):
@@ -86,7 +96,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         if any(error["type"] == "json_invalid" for error in errors):
             return error_response(request, 400, "MALFORMED_JSON", "Request body is not valid JSON")
         details = [
-            {"field": ".".join(str(part) for part in error["loc"]), "message": error["msg"]}
+            {"field": ".".join(str(part) for part in error["loc"]), "message": field_message(error)}
             for error in errors
         ]
         return error_response(

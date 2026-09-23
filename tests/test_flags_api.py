@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
+from app.schemas import PATTERN_HINTS
 
 FLAGS = "/api/v1/flags"
 
@@ -61,10 +62,37 @@ def test_duplicate_key_returns_409(client, make_flag):
     assert response.json()["error"]["code"] == "FLAG_ALREADY_EXISTS"
 
 
+def test_mixed_case_key_is_accepted_and_looked_up_exactly(client):
+    response = client.post(FLAGS, json={"key": "DO-checkout", "name": "New checkout flow"})
+
+    assert response.status_code == 201
+    assert response.json()["key"] == "DO-checkout"
+    assert client.get(f"{FLAGS}/DO-checkout").status_code == 200
+    assert client.get(f"{FLAGS}/do-checkout").status_code == 404
+
+
+def test_keys_that_differ_only_in_case_are_duplicates(client, make_flag):
+    make_flag("DO-checkout")
+
+    response = client.post(FLAGS, json={"key": "do-checkout", "name": "Same key, other case"})
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "FLAG_ALREADY_EXISTS"
+
+
+def test_invalid_key_gets_a_plain_english_message(client):
+    response = client.post(FLAGS, json={"key": "has space", "name": "x"})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["details"] == [
+        {"field": "body.key", "message": PATTERN_HINTS["key"]}
+    ]
+
+
 @pytest.mark.parametrize(
     "payload",
     [
-        {"key": "New-Checkout", "name": "uppercase key"},
+        {"key": "dots.not.allowed", "name": "dot in key"},
         {"key": "has space", "name": "space in key"},
         {"key": "-leading-dash", "name": "bad first character"},
         {"key": "k" * 65, "name": "key too long"},

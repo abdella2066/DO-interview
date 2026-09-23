@@ -17,8 +17,14 @@ from pydantic import (
 from app.evaluation import Reason
 from app.models import AuditAction
 
-FLAG_KEY_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,63}$"
+FLAG_KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
 USER_ID_PATTERN = r"^[A-Za-z0-9._:@+-]{1,128}$"
+# Plain-English messages for pattern failures, by field name, returned instead of the raw regex.
+PATTERN_HINTS = {
+    "key": "Use 1-64 letters, digits, '-' or '_', starting with a letter or digit "
+    "(for example 'new-checkout')",
+    "user_id": "Use 1-128 letters, digits, or the characters . _ : @ + -",
+}
 # Printable ASCII only: header bytes are decoded as Latin-1, so UTF-8 names would be stored garbled.
 ACTOR_PATTERN = r"^[ -~]+$"
 
@@ -53,7 +59,8 @@ class RequestModel(BaseModel):
 class FlagCreate(RequestModel):
     key: FlagKey = Field(
         examples=["new-checkout"],
-        description="Unique and immutable. Lowercase letters, digits, '-' and '_'.",
+        description="Immutable. Letters, digits, '-' and '_'. Lookups are exact, but keys "
+        "that differ only in case count as duplicates.",
     )
     name: FlagName = Field(examples=["New checkout flow"])
     description: FlagDescription | None = None

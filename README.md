@@ -49,7 +49,7 @@ All `/api/v1` endpoints need an `X-API-Key` header. The health probes are public
 Every error uses one shape, and the `request_id` matches the `X-Request-ID` response header and the log line:
 
 ```json
-{"error": {"code": "FLAG_ALREADY_EXISTS", "message": "Flag 'new-checkout' already exists", "details": null, "request_id": "4f1c..."}}
+{"error": {"code": "FLAG_ALREADY_EXISTS", "message": "A flag with key 'new-checkout' already exists (keys are unique regardless of case)", "details": null, "request_id": "4f1c..."}}
 ```
 
 | Status | Code | When |
@@ -58,14 +58,15 @@ Every error uses one shape, and the `request_id` matches the `X-Request-ID` resp
 | 401 | `UNAUTHORIZED` | Missing or wrong `X-API-Key` |
 | 404 | `FLAG_NOT_FOUND`, `OVERRIDE_NOT_FOUND`, `NOT_FOUND` | Unknown flag, override, or route |
 | 405 | `METHOD_NOT_ALLOWED` | Wrong HTTP method for the path |
-| 409 | `FLAG_ALREADY_EXISTS` | Creating a key that exists (enforced by a unique constraint, so it's race-safe) |
+| 409 | `FLAG_ALREADY_EXISTS` | Creating a key that exists, including one that differs only in case (enforced by unique indexes, so it's race-safe) |
 | 422 | `VALIDATION_ERROR` | Field-level problems, listed in `details` |
 | 503 | `SERVICE_UNAVAILABLE` | Postgres is unreachable, or a query ran past `DATABASE_TIMEOUT_SECONDS` |
 | 500 | `INTERNAL_ERROR` | Anything unexpected; logged with the request ID, no stack trace returned |
 
 Validation rules:
 
-- `key`: 1-64 characters: lowercase letters, digits, `-` and `_`, starting with a letter or digit. Keys can't be changed after creation.
+- `key`: 1-64 characters: letters (either case), digits, `-` and `_`, starting with a letter or digit. Lookups use the exact key, but keys that differ only in case count as duplicates, so `DO-checkout` and `do-checkout` can't both exist. Keys can't be changed after creation.
+- Pattern failures come back in plain English (for example "Use 1-64 letters, digits, '-' or '_', starting with a letter or digit"), not as a regular expression.
 - `name`: 1-100 characters after trimming whitespace. `description`: up to 500 characters, or `null`.
 - `user_id`: 1-128 characters from `A-Z a-z 0-9 . _ : @ + -`.
 - `enabled`: must be a real JSON boolean. `"true"`, `"yes"`, and `1` are rejected.
@@ -169,7 +170,7 @@ make test                                         # in-memory cache variants onl
 TEST_CACHE_URL=redis://localhost:6379/1 make test  # also runs every API test against Valkey (CI does this)
 ```
 
-The suite has 254 tests:
+The suite has 260 tests:
 
 - **Unit:** evaluation precedence, rollout bucketing (determinism, monotonicity, distribution, and independence across flags), snapshot serialization, in-memory cache TTL and eviction (with a fake clock), Redis fail-open (including a check that it fails fast), and config parsing.
 - **Integration:** FastAPI's `TestClient` against real Postgres, migrated with the real Alembic migrations and truncated before each test. Covers every endpoint and status code, the validation rules above, API key auth, the error envelope, request IDs, a database outage (503), cache hits and misses, and invalidation after every kind of write. The audit log tests cover each action's event, that rejected or failed writes leave no event, and that a failed audit insert rolls back its change. A few tests check the rules the database enforces on its own: the rollout default and range.
@@ -208,7 +209,8 @@ Deploying somewhere new: fork, add the two secrets, change `repo_clone_url` in `
 - **Invalidate after commit, with a TTL as the backstop.** Correct in the common case. A rare race and failed deletes during a cache outage are bounded by the TTL rather than eliminated.
 - **Fail-open cache.** Availability over latency: a Valkey outage makes requests slower, not failed.
 - **404 for unknown flags on evaluate,** rather than `enabled: false`. The API reports what it knows, and clients or SDKs decide their own safe default (normally off).
-- **Race-safe writes in the database.** Duplicate keys are caught by a unique constraint (409), and overrides use an atomic `INSERT ... ON CONFLICT DO UPDATE`.
+- **Race-safe writes in the database.** Duplicate keys are caught by unique indexes (409), and overrides use an atomic `INSERT ... ON CONFLICT DO UPDATE`.
+- **Flag key rules follow common practice.** Keys allow letters in either case, digits, `-` and `_`, and lookups use the exact key, as in LaunchDarkly and PostHog. A unique index on `lower(key)` rejects keys that differ only in case, as ConfigCat does, so near-duplicates can't coexist. Casing conventions (kebab-case, camelCase) are left to each team rather than enforced.
 - **Offset pagination and a single API key** keep the surface small. Cursor pagination and per-client scoped keys are the upgrade path.
 - **App Platform dev database.** Quick to provision but single-node without backups. Production would use a managed PostgreSQL cluster (`production: true` in the spec).
 - **Single-node managed Valkey.** The smallest plan, without a standby node. Because the cache fails open, a Valkey outage makes requests slower, not failed. A standby node (high availability) is the upgrade path.

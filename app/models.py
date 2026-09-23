@@ -49,6 +49,11 @@ class Flag(Base):
     )
 
 
+# Lookups use the exact key, but uniqueness ignores case, so "DO-checkout" and "do-checkout"
+# can't both exist.
+Index("uq_flags_key_lower", func.lower(Flag.key), unique=True)
+
+
 class FlagOverride(Base):
     __tablename__ = "flag_overrides"
     __mapper_args__ = {"eager_defaults": True}

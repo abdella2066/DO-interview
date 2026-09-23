@@ -185,4 +185,4 @@ def test_audit_rejects_bad_pagination(client, params):
 
 
 def test_audit_rejects_an_invalid_key(client):
-    assert client.get(f"{FLAGS}/Not-A-Key/audit").status_code == 422
+    assert client.get(f"{FLAGS}/not a key/audit").status_code == 422
