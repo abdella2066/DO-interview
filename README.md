@@ -169,7 +169,7 @@ make test                                         # in-memory cache variants onl
 TEST_CACHE_URL=redis://localhost:6379/1 make test  # also runs every API test against Valkey (CI does this)
 ```
 
-The suite has 248 tests:
+The suite has 252 tests:
 
 - **Unit:** evaluation precedence, rollout bucketing (determinism, monotonicity, distribution, and independence across flags), snapshot serialization, in-memory cache TTL and eviction (with a fake clock), Redis fail-open (including a check that it fails fast), and config parsing.
 - **Integration:** FastAPI's `TestClient` against real Postgres, migrated with the real Alembic migrations and truncated before each test. Covers every endpoint and status code, the validation rules above, API key auth, the error envelope, request IDs, a database outage (503), cache hits and misses, and invalidation after every kind of write. The audit log tests cover each action's event, that rejected or failed writes leave no event, and that a failed audit insert rolls back its change. A few tests check the rules the database enforces on its own: the rollout default and range.
